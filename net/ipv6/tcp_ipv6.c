@@ -251,6 +251,7 @@ static int tcp_v6_connect(struct sock *sk, struct sockaddr *uaddr,
 	fl6.flowi6_mark = sk->sk_mark;
 	fl6.fl6_dport = usin->sin6_port;
 	fl6.fl6_sport = inet->inet_sport;
+	fl6.flowi6_uid = sock_i_uid(sk);
 
 	final_p = fl6_update_dst(&fl6, np->opt, &final);
 
@@ -404,6 +405,7 @@ static void tcp_v6_err(struct sk_buff *skb, struct inet6_skb_parm *opt,
 			fl6.flowi6_mark = sk->sk_mark;
 			fl6.fl6_dport = inet->inet_dport;
 			fl6.fl6_sport = inet->inet_sport;
+			fl6.flowi6_uid = sock_i_uid(sk);
 			security_skb_classify_flow(skb, flowi6_to_flowi(&fl6));
 
 			dst = ip6_dst_lookup_flow(sk, &fl6, NULL, false);
@@ -496,6 +498,7 @@ static int tcp_v6_send_synack(struct sock *sk, struct request_sock *req,
 	fl6.flowi6_mark = sk->sk_mark;
 	fl6.fl6_dport = inet_rsk(req)->rmt_port;
 	fl6.fl6_sport = inet_rsk(req)->loc_port;
+	fl6.flowi6_uid = sock_i_uid(sk);
 	security_req_classify_flow(req, flowi6_to_flowi(&fl6));
 
 	opt = np->opt;
@@ -1340,7 +1343,6 @@ static struct sock * tcp_v6_syn_recv_sock(struct sock *sk, struct sk_buff *skb,
 	newsk->sk_bound_dev_if = treq->iif;
 
 	/* Now IPv6 options...
-
 	   First: no IPv4 options.
 	 */
 	newinet->inet_opt = NULL;
@@ -1365,7 +1367,6 @@ static struct sock * tcp_v6_syn_recv_sock(struct sock *sk, struct sk_buff *skb,
 	newnp->rcv_tclass = ipv6_tclass(ipv6_hdr(skb));
 
 	/* Clone native IPv6 options from listening socket (if any)
-
 	   Yes, keeping reference count would be much more clever,
 	   but we make one more one thing there: reattach optmem
 	   to newsk.
@@ -1489,12 +1490,10 @@ static int tcp_v6_do_rcv(struct sock *sk, struct sk_buff *skb)
 	 */
 
 	/* Do Stevens' IPV6_PKTOPTIONS.
-
 	   Yes, guys, it is the only place in our code, where we
 	   may make it not affecting IPv4.
 	   The rest of code is protocol independent,
 	   and I do not like idea to uglify IPv4.
-
 	   Actually, all the idea behind IPV6_PKTOPTIONS
 	   looks not very well thought. For now we latch
 	   options, received in the last packet, enqueued
@@ -1557,7 +1556,6 @@ csum_err:
 
 ipv6_pktoptions:
 	/* Do you ask, what is it?
-
 	   1. skb was enqueued by tcp.
 	   2. skb is added to tail of read queue, rather than out of order.
 	   3. socket is not in passive state.
@@ -1571,7 +1569,7 @@ ipv6_pktoptions:
 		if (np->rxopt.bits.rxhlim || np->rxopt.bits.rxohlim)
 			np->mcast_hops = ipv6_hdr(opt_skb)->hop_limit;
 		if (np->rxopt.bits.rxtclass)
-			np->rcv_tclass = ipv6_tclass(ipv6_hdr(skb));
+			np->rcv_tclass = ipv6_tclass(ipv6_hdr(opt_skb));
 		if (ipv6_opt_accepted(sk, opt_skb)) {
 			skb_set_owner_r(opt_skb, sk);
 			opt_skb = xchg(&np->pktoptions, opt_skb);
@@ -2079,6 +2077,17 @@ void tcp6_proc_exit(struct net *net)
 }
 #endif
 
+static void tcp_v6_clear_sk(struct sock *sk, int size)
+{
+	struct inet_sock *inet = inet_sk(sk);
+
+	/* we do not want to clear pinet6 field, because of RCU lookups */
+	sk_prot_clear_nulls(sk, offsetof(struct inet_sock, pinet6));
+
+	size -= offsetof(struct inet_sock, pinet6) + sizeof(inet->pinet6);
+	memset(&inet->pinet6 + 1, 0, size);
+}
+
 struct proto tcpv6_prot = {
 	.name			= "TCPv6",
 	.owner			= THIS_MODULE,
@@ -2120,6 +2129,7 @@ struct proto tcpv6_prot = {
 #ifdef CONFIG_CGROUP_MEM_RES_CTLR_KMEM
 	.proto_cgroup		= tcp_proto_cgroup,
 #endif
+	.clear_sk		= tcp_v6_clear_sk,
 };
 
 static const struct inet6_protocol tcpv6_protocol = {
